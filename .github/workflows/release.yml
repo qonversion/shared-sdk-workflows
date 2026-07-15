@@ -1,0 +1,191 @@
+name: One-click release
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: 'Version part to bump: patch, minor or major. Ignored when version is set'
+        required: false
+        type: string
+        default: 'patch'
+      version:
+        description: 'Explicit release version like 5.13.2. Overrides bump'
+        required: false
+        type: string
+        default: ''
+      release_notes:
+        description: 'Release notes markdown. When empty, GitHub auto-generated notes are used'
+        required: false
+        type: string
+        default: ''
+      lib:
+        description: 'Library name for multi-package repositories (android-sdk: sdk or nocodes)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      GH_TOKEN:
+        required: true
+
+jobs:
+  release:
+    name: Create and merge release pull requests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      LIB: ${{ inputs.lib }}
+    steps:
+      - name: Check out develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Calculate release version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXPLICIT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$LIB" ]; then
+            tag_regex="^$LIB/[0-9]+\.[0-9]+\.[0-9]+$"
+            branch_prefix="release-$LIB"
+          else
+            tag_regex="^[0-9]+\.[0-9]+\.[0-9]+$"
+            branch_prefix="release"
+          fi
+
+          open_prs=$(gh pr list --state open --json headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"$branch_prefix/\"))] | length")
+          if [ "$open_prs" != "0" ]; then
+            echo "::error::Open $branch_prefix/* pull requests found. Finish or close the previous release first."
+            exit 1
+          fi
+
+          if [ -n "$EXPLICIT_VERSION" ]; then
+            version="$EXPLICIT_VERSION"
+          else
+            last_version=$(git tag -l | grep -E "$tag_regex" | sed "s|^$LIB/||" | sort -V | tail -n 1)
+            if [ -z "$last_version" ]; then
+              echo "::error::No release tags found to calculate the next version from. Pass an explicit version."
+              exit 1
+            fi
+            IFS='.' read -r major minor patch <<< "$last_version"
+            case "$BUMP" in
+              major) version="$((major + 1)).0.0" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              patch) version="$major.$minor.$((patch + 1))" ;;
+              *) echo "::error::Unknown bump type: $BUMP"; exit 1 ;;
+            esac
+          fi
+
+          if ! echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version: $version"
+            exit 1
+          fi
+
+          case "$LIB" in
+            "") title="Release $version" ;;
+            sdk) title="Qonversion Release $version" ;;
+            nocodes) title="No-Codes Release $version" ;;
+            *) title="$LIB Release $version" ;;
+          esac
+
+          echo "Releasing version $version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "branch=$branch_prefix/$version" >> $GITHUB_OUTPUT
+          echo "title=$title" >> $GITHUB_OUTPUT
+
+      - name: Bump version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -n "$LIB" ]; then
+            fastlane bump lib:"$LIB" version:"$VERSION"
+          else
+            fastlane bump version:"$VERSION"
+          fi
+
+      - name: Push release branch
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git checkout -b "$BRANCH"
+          git commit -am "Bump version to $VERSION"
+          git push origin "$BRANCH"
+
+      - name: Create pull requests
+        id: prs
+        env:
+          BRANCH: ${{ steps.version.outputs.branch }}
+          TITLE: ${{ steps.version.outputs.title }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          {
+            echo "Release PR"
+            if [ -n "$RELEASE_NOTES" ]; then
+              echo ""
+              echo "<!-- release-notes:start -->"
+              printf '%s\n' "$RELEASE_NOTES"
+              echo "<!-- release-notes:end -->"
+            fi
+          } > /tmp/main_pr_body.md
+
+          gh label create one-click-release \
+            --description "Pull requests handled by the one-click release automation" \
+            --color 0E8A16 2>/dev/null || true
+
+          develop_pr=$(gh pr create --base develop --head "$BRANCH" --title "$TITLE" --body "Release PR")
+          main_pr=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file /tmp/main_pr_body.md)
+
+          gh pr edit "$develop_pr" --add-label autocreated,one-click-release || true
+          gh pr edit "$main_pr" --add-label autocreated,one-click-release || true
+
+          echo "develop_pr=$develop_pr" >> $GITHUB_OUTPUT
+          echo "main_pr=$main_pr" >> $GITHUB_OUTPUT
+
+      - name: Approve pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEVELOP_PR: ${{ steps.prs.outputs.develop_pr }}
+          MAIN_PR: ${{ steps.prs.outputs.main_pr }}
+        run: |
+          gh pr review "$DEVELOP_PR" --approve || \
+            echo "::warning::Could not approve the develop PR. Check that 'Allow GitHub Actions to create and approve pull requests' is enabled, or approve manually: $DEVELOP_PR"
+          gh pr review "$MAIN_PR" --approve || \
+            echo "::warning::Could not approve the main PR. Check that 'Allow GitHub Actions to create and approve pull requests' is enabled, or approve manually: $MAIN_PR"
+
+      # The develop PR is intentionally not merged here: it is merged by the
+      # publish_release workflow after the release PR lands in main. This avoids
+      # a race with the "automatically delete head branches" repo setting, which
+      # would close the second PR the moment the first one merges.
+      - name: Merge release pull request to main
+        env:
+          MAIN_PR: ${{ steps.prs.outputs.main_pr }}
+        run: |
+          if gh pr merge "$MAIN_PR" --auto --merge 2>/dev/null; then
+            echo "Auto-merge enabled for $MAIN_PR. It will merge once all requirements are met."
+            exit 0
+          fi
+
+          echo "Auto-merge is unavailable. Waiting for checks to finish before merging..."
+          sleep 60
+
+          set +e
+          output=$(gh pr checks "$MAIN_PR" --watch --fail-fast 2>&1)
+          code=$?
+          set -e
+          echo "$output"
+
+          if [ $code -ne 0 ] && ! echo "$output" | grep -qi "no checks reported"; then
+            echo "::error::Checks failed on $MAIN_PR — the release is stopped. Close or fix the release pull requests."
+            exit 1
+          fi
+
+          gh pr merge "$MAIN_PR" --merge
