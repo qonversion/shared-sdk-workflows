@@ -8,7 +8,7 @@ on:
 
 jobs:
   publish_release:
-    name: Create GitHub release and sync develop
+    name: Create GitHub release
     runs-on: ubuntu-latest
     if: github.event.pull_request.merged == true
     env:
@@ -71,31 +71,3 @@ jobs:
           else
             gh release create "$TAG" --target "$MERGE_SHA" --title "$TITLE" --generate-notes --latest
           fi
-
-      - name: Merge release pull request to develop
-        run: |
-          pr=$(gh pr list --state all --head "$HEAD_REF" --base develop --json number,state,mergedAt --jq '.[0]')
-          if [ -z "$pr" ] || [ "$pr" = "null" ]; then
-            echo "::warning::No develop pull request found for $HEAD_REF. Sync the version bump to develop manually."
-            exit 0
-          fi
-
-          number=$(echo "$pr" | jq -r .number)
-          state=$(echo "$pr" | jq -r .state)
-          merged_at=$(echo "$pr" | jq -r .mergedAt)
-
-          if [ "$merged_at" != "null" ]; then
-            echo "Develop PR #$number is already merged."
-            exit 0
-          fi
-
-          if [ "$state" = "CLOSED" ]; then
-            echo "Develop PR #$number was closed (the head branch was likely auto-deleted on merge). Restoring..."
-            head_sha=$(gh pr view "$number" --json headRefOid --jq .headRefOid)
-            gh api -X POST "repos/$GH_REPO/git/refs" -f "ref=refs/heads/$HEAD_REF" -f "sha=$head_sha" || true
-            gh pr reopen "$number"
-          fi
-
-          gh pr merge "$number" --merge || \
-            gh pr merge "$number" --auto --merge || \
-            echo "::warning::Could not merge develop PR #$number automatically. Merge it manually to keep the version files on develop in sync."

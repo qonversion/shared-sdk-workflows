@@ -37,10 +37,10 @@ jobs:
       GH_REPO: ${{ github.repository }}
       LIB: ${{ inputs.lib }}
     steps:
-      - name: Check out develop
+      - name: Check out main
         uses: actions/checkout@v4
         with:
-          ref: develop
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN }}
 
@@ -142,36 +142,25 @@ jobs:
             --color 0E8A16 2>/dev/null || true
           gh label create autocreated --color EDEDED 2>/dev/null || true
 
-          develop_pr=$(gh pr create --base develop --head "$BRANCH" --title "$TITLE" --body "Release PR")
           main_pr=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file /tmp/main_pr_body.md)
 
           # Labels are attached through the REST API on purpose: `gh pr edit
           # --add-label` needs the read:org scope the PAT may not have. This
           # step must fail loudly — the publish_release workflow only reacts
           # to release PRs carrying the one-click-release label.
-          gh api "repos/$GH_REPO/issues/${develop_pr##*/}/labels" \
-            -f "labels[]=autocreated" -f "labels[]=one-click-release" > /dev/null
           gh api "repos/$GH_REPO/issues/${main_pr##*/}/labels" \
             -f "labels[]=autocreated" -f "labels[]=one-click-release" > /dev/null
 
-          echo "develop_pr=$develop_pr" >> $GITHUB_OUTPUT
           echo "main_pr=$main_pr" >> $GITHUB_OUTPUT
 
-      - name: Approve pull requests
+      - name: Approve pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          DEVELOP_PR: ${{ steps.prs.outputs.develop_pr }}
           MAIN_PR: ${{ steps.prs.outputs.main_pr }}
         run: |
-          gh pr review "$DEVELOP_PR" --approve || \
-            echo "::warning::Could not approve the develop PR. Check that 'Allow GitHub Actions to create and approve pull requests' is enabled, or approve manually: $DEVELOP_PR"
           gh pr review "$MAIN_PR" --approve || \
             echo "::warning::Could not approve the main PR. Check that 'Allow GitHub Actions to create and approve pull requests' is enabled, or approve manually: $MAIN_PR"
 
-      # The develop PR is intentionally not merged here: it is merged by the
-      # publish_release workflow after the release PR lands in main. This avoids
-      # a race with the "automatically delete head branches" repo setting, which
-      # would close the second PR the moment the first one merges.
       # Always waits for CI explicitly instead of relying on auto-merge:
       # without required status checks a fresh PR is instantly "clean", and
       # `gh pr merge --auto` merges it right away, before the checks even
