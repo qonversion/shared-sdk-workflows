@@ -37,24 +37,6 @@ jobs:
           body: Release PR
           labels: autocreated
           branch: ${{ env.branch_name }}
-          base: develop
-
-      - uses: actions/checkout@v2
-        with:
-          ref: main
-
-      - name: Reset main branch
-        run: |
-          git fetch origin ${{ env.branch_name }}:${{ env.branch_name }}
-          git reset --hard ${{ env.branch_name }}
-
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v3
-        with:
-          title: Release ${{ inputs.version }}
-          body: Release PR
-          labels: autocreated
-          branch: ${{ env.branch_name }}
           base: main
 
       - id: step1
