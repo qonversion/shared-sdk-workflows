@@ -58,10 +58,12 @@ jobs:
             branch_prefix="release"
           fi
 
+          # Only a versioned release branch (release/1.2.3, release-sdk/1.2.3) means an unfinished release.
+          # Feature branches that merely start with the prefix (e.g. release/rc-v2) must not block releases.
           open_prs=$(gh pr list --state open --json headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"$branch_prefix/\"))] | length")
+            --jq "[.[] | select(.headRefName | test(\"^$branch_prefix/[0-9]+\\\\.[0-9]+\\\\.[0-9]+$\"))] | length")
           if [ "$open_prs" != "0" ]; then
-            echo "::error::Open $branch_prefix/* pull requests found. Finish or close the previous release first."
+            echo "::error::Open $branch_prefix/x.y.z pull requests found. Finish or close the previous release first."
             exit 1
           fi
 
