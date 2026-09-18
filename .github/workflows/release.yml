@@ -184,7 +184,16 @@ jobs:
           if [ -n "$has_checks" ]; then
             gh pr checks "$MAIN_PR" --watch --fail-fast
           else
-            echo "::warning::No checks appeared on $MAIN_PR within 5 minutes. Merging without a CI gate."
+            # The admin merge below bypasses required status checks too, so this wait is the only CI gate left:
+            # no checks within 5 minutes means an Actions incident — stop, do not ship an unverified bump.
+            echo "::error::No checks appeared on $MAIN_PR within 5 minutes; refusing to merge without a CI gate. Merge or close $MAIN_PR by hand once CI is back."
+            exit 1
           fi
 
-          gh pr merge "$MAIN_PR" --merge
+          # The release PR is an auto-generated version bump that nobody reviews by hand; the gate is the CI wait
+          # above. Review bots (CodeRabbit "pre-merge checks") can still leave a "changes requested" review on it,
+          # which the base branch policy turns into a hard block (qonversion-ios-sdk#770 stranded the 6.17.0
+          # release that way). `--admin` skips gh's client-side mergeability check; the server then lets a repo
+          # admin (GH_TOKEN is a PAT with admin on every SDK repo) merge past reviews and required checks, and
+          # still refuses loudly where "Do not allow bypassing" or a ruleset says so.
+          gh pr merge "$MAIN_PR" --merge --admin
