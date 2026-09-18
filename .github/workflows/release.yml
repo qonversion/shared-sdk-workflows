@@ -187,4 +187,9 @@ jobs:
             echo "::warning::No checks appeared on $MAIN_PR within 5 minutes. Merging without a CI gate."
           fi
 
-          gh pr merge "$MAIN_PR" --merge
+          # The release PR is an auto-generated version bump that nobody reviews by hand; the gate is the CI wait
+          # above plus the bot approval. Review bots (CodeRabbit "pre-merge checks") can still leave a
+          # "changes requested" review on it, which the base branch policy turns into a hard block
+          # (qonversion-ios-sdk#770 stopped the 6.17.0 release that way). Merge with admin rights so an advisory
+          # bot review cannot strand a release; GH_TOKEN is the owner PAT, which has them.
+          gh pr merge "$MAIN_PR" --merge --admin
