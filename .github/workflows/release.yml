@@ -30,13 +30,20 @@ on:
 jobs:
   release:
     name: Create and merge release pull requests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_PROTECTED || 'ubuntu-latest' }}
     timeout-minutes: 120
     env:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
       GH_REPO: ${{ github.repository }}
       LIB: ${{ inputs.lib }}
     steps:
+      # Hosted Ubuntu images do not guarantee a preinstalled fastlane executable.
+      # Install tools before checking out the SDK, without exposing the release PAT.
+      - name: Set up Fastlane
+        uses: qonversion/shared-sdk-workflows/.github/actions/setup-fastlane@main
+        env:
+          GH_TOKEN: ''
+
       - name: Check out main
         uses: actions/checkout@v4
         with:

@@ -1,0 +1,11 @@
+name: Set up Fastlane
+description: Install the Ruby and Fastlane versions used by SDK version-bump lanes.
+runs:
+  using: composite
+  steps:
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3'
+    - name: Install Fastlane
+      shell: bash
+      run: gem install fastlane --version 2.242.0 --no-document

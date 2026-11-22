@@ -1,0 +1,42 @@
+name: Check release tools
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/actions/setup-fastlane/**'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/check_fastlane.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tools-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fastlane:
+    runs-on: ${{ vars.CI_RUNNER_LIGHT || vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-fastlane
+      - name: Exercise the version-bump lane on Linux
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: '1'
+          FASTLANE_OPT_OUT_USAGE: '1'
+        shell: bash
+        run: |
+          fixture_dir=$(mktemp -d)
+          mkdir "$fixture_dir/fastlane"
+          cat > "$fixture_dir/fastlane/Fastfile" <<'RUBY'
+          lane :bump do |options|
+            File.write('../version.txt', options.fetch(:version))
+          end
+          RUBY
+          cd "$fixture_dir"
+          fastlane --version
+          fastlane bump version:11.12.1
+          test "$(cat version.txt)" = '11.12.1'
