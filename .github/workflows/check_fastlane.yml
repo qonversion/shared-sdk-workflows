@@ -16,10 +16,12 @@ concurrency:
 
 jobs:
   fastlane:
-    runs-on: ${{ vars.CI_RUNNER_PROTECTED || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER_LIGHT || vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-fastlane
       - name: Exercise the version-bump lane on Linux
         env:
